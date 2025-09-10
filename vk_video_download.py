@@ -1,151 +1,166 @@
-#!/usr/bin/env python3
-import os
-import sys
+import threading
+import tkinter as tk
+import webbrowser
+from tkinter import ttk, messagebox
 import yt_dlp
-import threading # Keep threading if you want concurrent downloads
+import requests
 
-# Original comments/examples:
 # https://vk.com/video-87011294_456249654 | example for vk.com
 # https://vkvideo.ru/video-50804569_456239864 | example for vkvideo.ru
 # https://my.mail.ru/v/hi-tech_mail/video/_groupvideo/437.html | example for my.mail.ru
 # https://rutube.ru/video/a16f1e575e114049d0e4d04dc7322667/ | example for rutube.ru
-# FromRussiaWithLove | Mons (https://github.com/blyamur/VK-Video-Download/) | ver. 1.5 CLI Mod | "non-commercial use only, for personal use"
+# FromRussiaWithLove | Mons (https://github.com/blyamur/VK-Video-Download/)  | ver. 1.5 | "non-commercial use only, for personal use"
 
-# --- Progress Hook ---
-# This function will be called by yt-dlp to report download progress
-def my_hook(d):
-    """yt-dlp progress hook to print status to console."""
-    if d['status'] == 'downloading':
-        # Get essential info, providing defaults if keys are missing
-        filename = d.get('filename', 'unknown file')
-        percent_str = d.get('_percent_str', '0.0%').strip()
-        speed_str = d.get('_speed_str', 'N/A').strip()
-        eta_str = d.get('_eta_str', 'N/A').strip()
+currentVersion = '1.5'
+class App(ttk.Frame):
+    def __init__(self, parent):
+        ttk.Frame.__init__(self)
+        for index in [0, 1, 2]:
+            self.columnconfigure(index=index, weight=1)
+            self.rowconfigure(index=index, weight=1)
+        self.setup_widgets()
 
-        # Clean percentage string (remove potential ANSI codes)
-        percent_str_clean = ''.join(c for c in percent_str if c.isprintable())
-
-        # Print progress on the same line
-        # Use a slice of the filename to prevent overly long lines
-        short_filename = os.path.basename(filename)
-        if len(short_filename) > 40:
-            short_filename = "..." + short_filename[-37:]
-
-        # Print progress, overwriting the previous line (\r)
-        sys.stdout.write(
-            f"\rDownloading \"{short_filename}\": {percent_str_clean} | Speed: {speed_str} | ETA: {eta_str}   "
+    def setup_widgets(self):
+        self.widgets_frame = ttk.Frame(self, padding=(0, 10, 0, 0))
+        self.widgets_frame.grid(
+            row=0, column=1, padx=10, pady=(25, 0), sticky="nsew"
         )
-        sys.stdout.flush() # Ensure the output is displayed immediately
+        self.widgets_frame.columnconfigure(index=0, weight=1)
+        self.label = ttk.Label(
+            self.widgets_frame,
+            text="Вставьте ссылку(и) на видео через запятую",
+            justify="center",
+            font=("-size", 15, "-weight", "bold"),
+        )
+        self.label.grid(row=0, column=0,padx=0, pady=25, sticky="n")
 
-    elif d['status'] == 'finished':
-        filename = d.get('filename', 'unknown file')
-        short_filename = os.path.basename(filename)
-        # Print a newline after finishing to avoid overwriting the final status
-        sys.stdout.write(f"\nFinished downloading \"{short_filename}\".\n") # Removed "Processing..." as merging is less likely
-        sys.stdout.flush()
+        self.entry_nm = ttk.Entry(self.widgets_frame, font=("Calibri 22"))
+        self.entry_nm.insert(tk.END, str(''))
+        self.entry_nm.grid(row=1, column=0, columnspan=10, padx=(5, 5), ipadx=150, ipady=5, pady=(0, 0), sticky="ew")
+        self.entry_nm.bind('<Return>', self.on_enter_pressed)
 
-    elif d['status'] == 'error':
-        filename = d.get('filename', 'unknown file')
-        short_filename = os.path.basename(filename)
-        sys.stdout.write(f"\nError downloading \"{short_filename}\".\n")
-        sys.stdout.flush()
+        self.bt_frame = ttk.Frame(self, padding=(0, 0, 0, 0))
+        self.bt_frame.grid(row=1, column=0, padx=(10, 10), pady=0, columnspan=10, sticky="n")
 
-# --- Download Function ---
-def download_video(video_url, output_dir="downloads"):
-    """Downloads a single video from the given URL using yt-dlp, prioritizing formats that don't require merging."""
-    print(f"\nProcessing URL: {video_url}")
+        self.accentbutton = ttk.Button(
+            self.bt_frame, text="Скачать видео", style="Accent.TButton",command=self.get_directory_string
+        )
+        self.accentbutton.grid(row=0, column=0,columnspan=3, ipadx=30, padx=2, pady=(5, 0), sticky="n")
 
-    # --- Create Output Directory ---
-    if not os.path.exists(output_dir):
+        self.bt_frame.columnconfigure(index=0, weight=1)
+        self.status_label = ttk.Label(
+            self.bt_frame,
+            text=" ",
+            justify="center",
+            font=("-size", 10, "-weight", "normal"),
+        )
+        self.status_label.grid(row=1, column=0,padx=0, pady=15, sticky="n") 
+
+        self.copy_frame = ttk.Frame(self, padding=(0, 0, 0, 10))
+        self.copy_frame.grid(row=8, column=0, padx=(10, 10), pady=5, columnspan=10 , sticky="s")
+        self.UrlButton = ttk.Button(
+            self.copy_frame, text="About", style="Url.TButton",command=self.openweb
+        )
+        self.UrlButton.grid(row=1, column=0, padx=20, pady=0, columnspan=2, sticky="n")
+        self.UrlButton = ttk.Button(
+            self.copy_frame, text="Vers.: " +currentVersion+" ", style="Url.TButton",command=self.checkUpdate
+        ) 
+        self.UrlButton.grid(row=1, column=4, padx=20, pady=0, columnspan=2, sticky="w")
+        self.UrlButton = ttk.Button(
+            self.copy_frame, text="Donate", style="Url.TButton",command=self.donate
+        )
+        self.UrlButton.grid(row=1, column=7, padx=20, pady=0, columnspan=2, sticky="w")
+
+    def openweb(self):
+        webbrowser.open_new_tab('https://github.com/blyamur/VK-Video-Download')
+
+    def donate(self):
+        webbrowser.open_new_tab('https://ko-fi.com/monseg')
+
+    def checkUpdate(self, method='Button'):
         try:
-            print(f"Creating directory: {output_dir}")
-            os.makedirs(output_dir)
-        except OSError as e:
-            print(f"Error: Could not create directory '{output_dir}'. {e}")
-            return # Stop if directory can't be created
+            github_page = requests.get('https://raw.githubusercontent.com/blyamur/VK-Video-Download/main/README.md')
+            github_page_html = str(github_page.content).split()
+            for i in range(0,8):
+                try:
+                    index = github_page_html.index(('1.' + str(i)))
+                    version = github_page_html[index]
+                except ValueError:
+                    pass
 
-    # --- yt-dlp Options ---
-    ydl_opts = {
-        'outtmpl': os.path.join(output_dir, '%(title)s.mp4'), # Save as .mp4 in 'downloads' folder
+            if float(version) > float(currentVersion):
+                self.updateApp(version)
+            else:
+                if method == 'Button':
+                    messagebox.showinfo(title='Обновления не найдены', message=f'Обновления не найдены.\nТекущая версия: {version}')
+        except requests.exceptions.ConnectionError:
+            if method == 'Button':
+                messagebox.showwarning(title='Нет доступа к сети', message='Нет доступа к сети.\nПроверьте подключение к интернету.')
+            elif method == 'ConnectionError':
+                pass
+        except Exception as e:
+                print(f"An error occurred: {e}")
 
-        # --- FORMAT SELECTION CHANGE ---
-        # The 'format' option is REMOVED.
-        # This lets yt-dlp use its default format selection, which often prefers
-        # pre-merged formats (video+audio together) if available.
-        # This avoids the need for FFmpeg for merging in many cases, similar to the original script.
-        # Note: This might result in lower quality downloads compared to merging bestvideo+bestaudio.
-        # 'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # <--- This line is removed/commented out
+    def updateApp(self, version):
+        update = messagebox.askyesno(title='Найдено обновление', message=f'Доступна новая версия {version} . Обновимся?')
+        if update:
+            webbrowser.open_new_tab('https://github.com/blyamur/VK-Video-Download')
 
-        # Alternative format option prioritizing pre-merged MP4s:
-        # 'format': 'best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]',
-
-        'quiet': False,         # Shows yt-dlp's own messages
-        'progress_hooks': [my_hook], # Use our custom progress function
-        'noplaylist': True,     # Download only the video, not the playlist
-        'noprogress': True,     # Disable yt-dlp's default progress bar
-        # Postprocessor for metadata might still rely on FFmpeg, commenting out to be safe
-        # 'postprocessors': [{
-        #     'key': 'FFmpegMetadata',
-        #     'add_metadata': True,
-        # }],
-        # 'verbose': True,      # Uncomment for detailed debugging output from yt-dlp
-    }
-
-    # --- Execute Download ---
-    try:
-        print("Starting download process (prioritizing non-merging formats)...")
-        # Using 'with' ensures yt-dlp resources are cleaned up properly
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Perform the download
-            ydl.download([video_url])
-        # Success message is handled by the 'finished' status in my_hook
-
-    except yt_dlp.utils.DownloadError as e:
-        # Handle errors specifically related to downloading
-        # Check if the error is specifically about FFmpeg missing, even with changed format options
-        if 'ffmpeg not found' in str(e).lower() or 'ffmpeg is not installed' in str(e).lower():
-             print(f"\nError downloading {video_url}. Reason: {e}")
-             print("FFmpeg might still be required for processing or remuxing this specific video format.")
+    def get_directory_string(self):
+        if self.entry_nm.get() == '':
+            self.status_label.configure(text="Вы не ввели ссылку на видео")
+            pass
         else:
-            print(f"\nError downloading {video_url}. Reason: {e}")
-    except Exception as e:
-        # Handle other unexpected errors during the process
-        print(f"\nAn unexpected error occurred while processing {video_url}: {e}")
+            video_urls = self.entry_nm.get().split(',')
+            for video_url in video_urls:
+                video_url = video_url.strip()
+                if video_url:
+                    try:
+                        t = threading.Thread(target=self.download_video, args=(video_url,))
+                        t.start()
+                    except:
+                        self.status_label.configure(text="Произошла ошибка")
+            self.entry_nm.delete(0, tk.END)
 
-# --- Main Execution Block ---
+    def download_video(self, video_url):
+        try:
+            #ydl_opts = {'outtmpl': 'downloads/%(title)s.%(ext)s', 'quiet': True, 'progress_hooks': [self.my_hook]}
+            ydl_opts = {'outtmpl': 'downloads/%(title)s.mp4', 'quiet': True, 'progress_hooks': [self.my_hook]}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
+                info = ydl.extract_info(video_url, download=True)
+                self.status_label.configure(text=f"Видео успешно скачано: «{info['title']}»")
+        except:
+            self.status_label.configure(text="Произошла ошибка")
+
+    def my_hook(self, d):
+       if d['status'] == 'downloading':
+           percent_str_clear = d['_percent_str'].replace('[0;94m', '')
+           percent_str = percent_str_clear
+           percent_str = ''.join(chr for chr in percent_str if chr.isprintable())
+           percent = percent_str.split('%')[0].strip()
+           root.after(0, lambda: self.status_label.configure(text=f"Скачиваем... {percent}% ", font=("Arial", 10)))
+       elif d['status'] == 'finished':
+           root.after(0, lambda: self.status_label.configure(text="Загрузка завершена!", font=("Arial", 10)))
+
+    def on_enter_pressed(self, event):
+        self.get_directory_string()
+        
 if __name__ == "__main__":
-    print("VK/RU Video Downloader (CLI Version - No FFmpeg Priority)")
-    print("-" * 30)
-
-    # --- Get URL(s) from User ---
-    url_input = input("Enter the video URL (or multiple URLs separated by commas):\n> ")
-
-    if not url_input:
-        print("No URL entered. Exiting.")
-        sys.exit(1) # Exit with an error code
-
-    # --- Process URLs ---
-    video_urls = [url.strip() for url in url_input.split(',') if url.strip()]
-
-    if not video_urls:
-        print("No valid URLs found after processing input. Exiting.")
-        sys.exit(1)
-
-    print(f"\nFound {len(video_urls)} URL(s) to download.")
-
-    # --- Download Concurrently using Threads ---
-    threads = []
-    for url in video_urls:
-        # Create a thread for each download task
-        thread = threading.Thread(target=download_video, args=(url,))
-        threads.append(thread)
-        thread.start() # Start the thread
-
-    # Wait for all threads to complete before exiting the main script
-    for thread in threads:
-        thread.join()
-    # --- End Concurrency ---
-
-    print("\n" + "-" * 30)
-    print("All download tasks finished.")
-    sys.exit(0) # Exit successfully
+    root = tk.Tk()
+    w = root.winfo_screenwidth()
+    h = root.winfo_screenheight()
+    w = w//2 
+    h = h//2 
+    w = w - 200
+    h = h - 200
+    root.geometry('680x350+{}+{}'.format(w, h))
+    root.resizable(False, False)
+    root.title("Скачать видео с VK.com")
+    root.iconbitmap('theme/icon.ico')
+    root.tk.call("source", "theme/vk_theme.tcl")
+    root.tk.call("set_theme", "light")
+    app = App(root)
+    app.pack(fill="both", expand=True)
+    root.update()
+    root.mainloop()
