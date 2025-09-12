@@ -11,8 +11,13 @@ from aiogram.types import Message, FSInputFile
 # from aiogram.utils.markdown import hbold # For formatting, if needed
 
 # --- Configuration ---
-BOT_TOKEN = "7819585434:AAEyEQATFTgM098Loh-XsvOIZY9fw_APrMc" 
-DOWNLOAD_DIR = "downloads_bot" # Директория для временного хранения видео
+# Токен вашего Telegram-бота, полученный от BotFather.
+# ВНИМАНИЕ: Не рекомендуется хранить токен напрямую в коде в продакшене.
+# Используйте переменные окружения или защищенные хранилища.
+BOT_TOKEN = "7819585434:AAEyEQATFTgM098Loh-XsvOIZY9fw_APrMc"
+# Директория для временного хранения скачиваемых видеофайлов.
+# Все видео будут сохраняться сюда перед отправкой пользователю и последующим удалением.
+DOWNLOAD_DIR = "downloads_bot"
 
 # --- Logging ---
 # Настройка логирования для вывода информации о работе бота
@@ -25,10 +30,11 @@ logger = logging.getLogger(__name__)
 # --- yt-dlp Progress Hook (Modified for Bot) ---
 
 async def update_telegram_message(bot: Bot, chat_id: int, message_id: int, text: str, last_sent_texts: dict):
-    """
-    Вспомогательная функция для редактирования сообщения в Telegram.
-    Избегает ошибки "Message not modified" путем проверки, изменился ли текст.
-    """
+    # Эта функция асинхронно редактирует сообщение в Telegram.
+    # Она принимает объект бота, ID чата, ID сообщения, новый текст и словарь для отслеживания
+    # последнего отправленного текста, чтобы избежать ненужных обновлений.
+
+    # Ключ для отслеживания последнего отправленного текста для конкретного сообщения
     # Ключ для отслеживания последнего отправленного текста для конкретного сообщения
     message_key = f"{chat_id}_{message_id}"
     if last_sent_texts.get(message_key) != text:
@@ -41,12 +47,22 @@ async def update_telegram_message(bot: Bot, chat_id: int, message_id: int, text:
 
 
 def create_progress_hook(bot: Bot, chat_id: int, status_message_id: int, progress_queue: asyncio.Queue):
-    """
-    Создает функцию-хук для yt-dlp, которая будет вызываться во время загрузки.
-    Эта функция помещает обновления прогресса в очередь asyncio.Queue.
-    """
+    # Создает функцию-хук, которая будет использоваться библиотекой yt-dlp для уведомлений о ходе загрузки.
+    # Хук передает информацию о прогрессе в асинхронную очередь `progress_queue`,
+    # откуда ее будет читать другая асинхронная задача для обновления сообщений в Telegram.
+    #
+    # Аргументы:
+    #   bot (Bot): Экземпляр бота Aiogram.
+    #   chat_id (int): ID чата Telegram, куда отправляются обновления.
+    #   status_message_id (int): ID сообщения в Telegram, которое будет обновляться.
+    #   progress_queue (asyncio.Queue): Очередь для передачи данных о прогрессе между потоками.
+    #
+    # Возвращает:
+    #   function: Внутренняя функция `_hook`, которая соответствует интерфейсу хука yt-dlp.
+    #
     def _hook(d):
-        # Эта функция вызывается из yt-dlp (потенциально в другом потоке)
+        # Эта внутренняя функция `_hook` вызывается библиотекой yt-dlp при изменении статуса загрузки.
+        # `d` - это словарь, содержащий информацию о текущем состоянии загрузки.
         logger.debug(f"yt-dlp hook called with status: {d.get('status')}")
         if d['status'] == 'downloading':
             # Извлекаем информацию о прогрессе
@@ -106,10 +122,18 @@ def create_progress_hook(bot: Bot, chat_id: int, status_message_id: int, progres
 
 # --- Download Function (Adapted for Bot and Async) ---
 async def download_video_for_bot(bot: Bot, chat_id: int, video_url: str, last_sent_texts_global: dict):
-    """
-    Скачивает видео, отправляет обновления прогресса и итоговое видео в Telegram.
-    `last_sent_texts_global` используется для предотвращения ошибок "Message not modified".
-    """
+    # Асинхронная функция для обработки полного цикла загрузки видео:
+    # создание директории, инициализация yt-dlp, мониторинг прогресса,
+    # отправка файла пользователю и последующее удаление временных файлов.
+    #
+    # Аргументы:
+    #   bot (Bot): Экземпляр бота Aiogram.
+    #   chat_id (int): ID чата Telegram, куда отправляются сообщения.
+    #   video_url (str): URL видео для загрузки.
+    #   last_sent_texts_global (dict): Глобальный словарь для отслеживания последних отправленных текстов
+    #                                  сообщений, чтобы избежать ошибок "Message not modified".
+
+    # Проверяем и создаем директорию для загрузок, если она не существует
     if not os.path.exists(DOWNLOAD_DIR):
         try:
             os.makedirs(DOWNLOAD_DIR)
